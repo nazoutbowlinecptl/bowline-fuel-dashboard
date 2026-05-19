@@ -6,13 +6,18 @@ export default function Dashboard() {
   const [gasPrice, setGasPrice] = useState(null);
   const [priceHistory, setPriceHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [fuelInventory, setFuelInventory] = useState(() => localStorage.getItem('fuelInventory') || '');
-  const [maxCapacity, setMaxCapacity] = useState(() => localStorage.getItem('maxCapacity') || '');
-  const [currentPrice, setCurrentPrice] = useState(() => localStorage.getItem('currentPrice') || '');
+  const [fuelInventory, setFuelInventory] = useState('');
+  const [maxCapacity, setMaxCapacity] = useState('');
+  const [currentPrice, setCurrentPrice] = useState('');
   const [targetMargin, setTargetMargin] = useState(30);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  useEffect(() => { fetchGasPrice(); }, []);
+  useEffect(() => {
+    fetchGasPrice();
+    setFuelInventory(localStorage.getItem('fuelInventory') || '');
+    setMaxCapacity(localStorage.getItem('maxCapacity') || '');
+    setCurrentPrice(localStorage.getItem('currentPrice') || '');
+}, []);
   useEffect(() => { localStorage.setItem('fuelInventory', fuelInventory); }, [fuelInventory]);
   useEffect(() => { localStorage.setItem('maxCapacity', maxCapacity); }, [maxCapacity]);
   useEffect(() => { localStorage.setItem('currentPrice', currentPrice); }, [currentPrice]);
