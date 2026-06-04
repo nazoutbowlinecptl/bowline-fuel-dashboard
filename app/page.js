@@ -2,113 +2,66 @@
 
 import { useState, useEffect } from 'react';
 
+const MARINA_NAME = 'lake-oconee';
+
 export default function Dashboard() {
+  // Marina settings from DB
+  const [marina, setMarina] = useState(null);
   const [inventory, setInventory] = useState('');
-  const [capacity, setCapacity] = useState('12000');
-  const [manualPrice, setManualPrice] = useState('');
   const [targetMargin, setTargetMargin] = useState(30);
 
+  // Sharper transactions
   const [transactions, setTransactions] = useState([]);
   const [sharperUpdated, setSharperUpdated] = useState(null);
   const [showTxTable, setShowTxTable] = useState(false);
 
-  // Invoice state
+  // Invoices from DB
   const [invoices, setInvoices] = useState([]);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [marinaVendor, setMarinaVendor] = useState('Rossee Oil Co Inc');
   const [editingVendor, setEditingVendor] = useState(false);
   const [tempVendor, setTempVendor] = useState('');
   const [invDate, setInvDate] = useState(new Date().toISOString().slice(0, 10));
   const [invFuelType, setInvFuelType] = useState('90 Octane');
   const [invGallons, setInvGallons] = useState('');
   const [invTotalCost, setInvTotalCost] = useState('');
-  const [invPdfDataUrl, setInvPdfDataUrl] = useState(null);
-  const [invPdfFileName, setInvPdfFileName] = useState('');
-
-  useEffect(() => { fetchSharperTransactions(); }, []);
+  const [saving, setSaving] = useState(false);
+  const [manualPrice, setManualPrice] = useState('');
 
   useEffect(() => {
-    setInventory(localStorage.getItem('inventory') || '');
-    setCapacity(localStorage.getItem('capacity') || '12000');
-    setManualPrice(localStorage.getItem('manualPrice') || '');
-    setTargetMargin(parseFloat(localStorage.getItem('targetMargin')) || 30);
-    const savedInvoices = localStorage.getItem('invoices');
-    const savedVendor = localStorage.getItem('marinaVendor');
-    if (savedInvoices) setInvoices(JSON.parse(savedInvoices));
-    if (savedVendor) setMarinaVendor(savedVendor);
+    fetchMarina();
+    fetchInvoices();
+    fetchSharperTransactions();
   }, []);
 
-  useEffect(() => { localStorage.setItem('inventory', inventory); }, [inventory]);
-  useEffect(() => { localStorage.setItem('capacity', capacity); }, [capacity]);
-  useEffect(() => { localStorage.setItem('manualPrice', manualPrice); }, [manualPrice]);
-  useEffect(() => { localStorage.setItem('targetMargin', targetMargin); }, [targetMargin]);
-  useEffect(() => {
-    try { localStorage.setItem('invoices', JSON.stringify(invoices)); }
-    catch (e) { alert('Storage limit reached. Consider removing older invoices.'); }
-  }, [invoices]);
-  useEffect(() => { localStorage.setItem('marinaVendor', marinaVendor); }, [marinaVendor]);
-
-  function handlePdfUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.type !== 'application/pdf') {
-      alert('Please upload a PDF file');
-      return;
-    }
-    if (file.size > 4 * 1024 * 1024) {
-      alert('PDF must be under 4MB for browser storage');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      setInvPdfDataUrl(evt.target.result);
-      setInvPdfFileName(file.name);
-    };
-    reader.readAsDataURL(file);
+  async function fetchMarina() {
+    try {
+      const res = await fetch(`/api/marina?name=${MARINA_NAME}`);
+      const data = await res.json();
+      if (data.marina) {
+        setMarina(data.marina);
+        setInventory(data.marina.current_inventory || '');
+        setTargetMargin(parseFloat(data.marina.target_margin) || 30);
+      }
+    } catch (err) { console.error('Failed to fetch marina:', err); }
   }
 
-  function handleSaveInvoice() {
-    if (!invDate || !invGallons || !invTotalCost) {
-      alert('Please fill in date, gallons, and total cost');
-      return;
-    }
-    const gallons = parseFloat(invGallons);
-    const totalCost = parseFloat(invTotalCost);
-    if (gallons <= 0 || totalCost <= 0) {
-      alert('Gallons and Total Cost must be positive');
-      return;
-    }
-    const newInvoice = {
-      id: Date.now(),
-      date: invDate,
-      vendor: marinaVendor,
-      fuelType: invFuelType,
-      gallons,
-      totalCost,
-      pricePerGallon: totalCost / gallons,
-      pdfDataUrl: invPdfDataUrl,
-      pdfFileName: invPdfFileName,
-    };
-    setInvoices([...invoices, newInvoice]);
-    setInvDate(new Date().toISOString().slice(0, 10));
-    setInvGallons('');
-    setInvTotalCost('');
-    setInvPdfDataUrl(null);
-    setInvPdfFileName('');
-    setShowInvoiceModal(false);
+  async function fetchInvoices() {
+    try {
+      const res = await fetch(`/api/invoices?marina=${MARINA_NAME}`);
+      const data = await res.json();
+      if (data.invoices) {
+        setInvoices(data.invoices.map(inv => ({
+          ...inv,
+          date: inv.invoice_date.slice(0, 10),
+          gallons: parseFloat(inv.gallons),
+          totalCost: parseFloat(inv.total_cost),
+          pricePerGallon: parseFloat(inv.price_per_gallon),
+          fuelType: inv.fuel_type,
+        })));
+      }
+    } catch (err) { console.error('Failed to fetch invoices:', err); }
   }
 
-  function handleDeleteInvoice(id) {
-    if (confirm('Delete this invoice?')) {
-      setInvoices(invoices.filter(inv => inv.id !== id));
-    }
-  }
-
-  function viewPdf(dataUrl) {
-    const w = window.open();
-    w.document.write(`<iframe src="${dataUrl}" style="width:100%;height:100vh;border:none;"></iframe>`);
-  }
-  
   async function fetchSharperTransactions() {
     try {
       const res = await fetch('/api/sharper');
@@ -131,9 +84,91 @@ export default function Dashboard() {
       }).filter(t => t.quantity > 0);
       setTransactions(parsed);
       setSharperUpdated(new Date().toLocaleString());
-    } catch (err) {
-      console.error('Failed to fetch Sharper data:', err);
+    } catch (err) { console.error('Failed to fetch Sharper data:', err); }
+  }
+
+  async function saveInventory(value) {
+    setInventory(value);
+    try {
+      await fetch('/api/marina', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: MARINA_NAME, current_inventory: value === '' ? null : parseFloat(value) }),
+      });
+    } catch (err) { console.error('Failed to save inventory:', err); }
+  }
+
+  async function saveTargetMargin(value) {
+    setTargetMargin(value);
+    try {
+      await fetch('/api/marina', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: MARINA_NAME, target_margin: value === '' ? null : parseFloat(value) }),
+      });
+    } catch (err) { console.error('Failed to save target margin:', err); }
+  }
+
+  async function saveVendor(value) {
+    try {
+      await fetch('/api/marina', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: MARINA_NAME, vendor: value }),
+      });
+      setMarina({ ...marina, vendor: value });
+    } catch (err) { console.error('Failed to save vendor:', err); }
+  }
+
+  async function handleSaveInvoice() {
+    if (!invDate || !invGallons || !invTotalCost) {
+      alert('Please fill in date, gallons, and total cost');
+      return;
     }
+    const gallons = parseFloat(invGallons);
+    const totalCost = parseFloat(invTotalCost);
+    if (gallons <= 0 || totalCost <= 0) {
+      alert('Gallons and Total Cost must be positive');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch('/api/invoices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          marina: MARINA_NAME,
+          invoice_date: invDate,
+          vendor: marina?.vendor || 'Unknown',
+          fuel_type: invFuelType,
+          gallons,
+          total_cost: totalCost,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert('Failed to save: ' + data.error);
+      } else {
+        await fetchInvoices();
+        setInvDate(new Date().toISOString().slice(0, 10));
+        setInvGallons('');
+        setInvTotalCost('');
+        setShowInvoiceModal(false);
+      }
+    } catch (err) {
+      alert('Failed to save invoice');
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteInvoice(id) {
+    if (!confirm('Delete this invoice?')) return;
+    try {
+      await fetch(`/api/invoices?id=${id}`, { method: 'DELETE' });
+      await fetchInvoices();
+    } catch (err) { console.error('Failed to delete:', err); }
   }
 
   const parseDate = (d) => { if (!d) return null; const dt = new Date(d); return isNaN(dt) ? null : dt; };
@@ -141,12 +176,9 @@ export default function Dashboard() {
   const maxDate = allTxWithDate.length ? new Date(Math.max(...allTxWithDate.map(t => t.dateObj))) : null;
   const cutoff = maxDate ? new Date(maxDate.getTime() - 2 * 24 * 60 * 60 * 1000) : null;
   const recentTx = allTxWithDate.filter(t => t.dateObj > cutoff).sort((a, b) => new Date(b.time) - new Date(a.time));
-  const mostRecentInvoice = invoices.length > 0 
-    ? [...invoices].sort((a, b) => new Date(b.date) - new Date(a.date))[0] 
-    : null;
+  const mostRecentInvoice = invoices.length > 0 ? invoices[0] : null;
   const effectiveCOGS = mostRecentInvoice ? mostRecentInvoice.pricePerGallon : null;
 
-  // Invoice chart: last 3 months
   const invoiceChartData = (() => {
     if (invoices.length < 2) return null;
     const ninetyDaysAgo = new Date();
@@ -200,9 +232,9 @@ export default function Dashboard() {
   const effectiveMargin = effectivePrice && effectiveCOGS ? (((effectivePrice - effectiveCOGS) / effectivePrice) * 100) : null;
   const marginDeviation = effectiveMargin !== null ? (effectiveMargin - targetMargin) : null;
   const marginLeakage = listedMargin !== null && effectiveMargin !== null ? listedMargin - effectiveMargin : null;
-  const inventoryPct = inventory && capacity ? Math.min((parseFloat(inventory) / parseFloat(capacity)) * 100, 100) : null;
+  const capacity = marina?.max_capacity ? parseFloat(marina.max_capacity) : null;
+  const inventoryPct = inventory && capacity ? Math.min((parseFloat(inventory) / capacity) * 100, 100) : null;
 
-  // Invoice chart SVG dimensions
   const IC_W = 340, IC_H = 80, IC_PADL = 40, IC_PADB = 20, IC_PADT = 8;
   const ic_inW = IC_W - IC_PADL, ic_inH = IC_H - IC_PADB - IC_PADT;
   const ic_prices = invoiceChartData ? invoiceChartData.map(i => i.pricePerGallon) : [];
@@ -250,19 +282,18 @@ export default function Dashboard() {
               <span style={{ color: '#1f2937' }}>|</span>
               <span style={{ fontSize: '0.6rem', fontWeight: 500, letterSpacing: '0.08em', color: '#4b5563', textTransform: 'uppercase' }}>Fuel Margins</span>
             </div>
-            <h1 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.03em', color: '#f9fafb', margin: 0 }}>Lake Oconee Marina</h1>
-            <p style={{ fontSize: '0.7rem', color: '#4b5563', marginTop: '0.1rem' }}>144 Collis Marina Rd NE · Eatonton, GA 31024 · Region: Georgia · Vendor: {marinaVendor}</p>
+            <h1 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.03em', color: '#f9fafb', margin: 0 }}>{marina?.display_name || 'Loading...'}</h1>
+            <p style={{ fontSize: '0.7rem', color: '#4b5563', marginTop: '0.1rem' }}>{marina?.address} · Region: {marina?.region} · Vendor: {marina?.vendor}</p>
             {sharperUpdated && <p style={{ fontSize: '0.6rem', color: '#374151', margin: '0.2rem 0 0' }}>Sharper synced: {sharperUpdated}</p>}
           </div>
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <button onClick={() => setShowInvoiceModal(true)} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.35rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 600 }}>
               + Log Invoice {invoices.length > 0 && <span style={{ color: '#60a5fa', marginLeft: '0.25rem' }}>({invoices.length})</span>}
             </button>
-            <button onClick={fetchSharperTransactions} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.35rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer' }}>↻ Refresh</button>
+            <button onClick={() => { fetchSharperTransactions(); fetchInvoices(); fetchMarina(); }} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.35rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer' }}>↻ Refresh</button>
           </div>
         </div>
 
-        {/* Simplified Status Banner */}
         {effectiveMargin !== null && (
           <div style={{ background: '#0d1117', border: '1px solid #1a2030', borderRadius: '0.5rem', padding: '0.5rem 0.9rem', marginBottom: '0.85rem' }}>
             <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>
@@ -271,7 +302,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Row 1: COGS | Suggested | Inventory */}
         <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
 
           <div style={cardStyle}>
@@ -355,7 +385,10 @@ export default function Dashboard() {
                 type="number" step="1" min="1" max="99"
                 value={targetMargin}
                 onChange={(e) => setTargetMargin(e.target.value === '' ? '' : parseFloat(e.target.value))}
-                onBlur={(e) => { if (!e.target.value || isNaN(e.target.value)) setTargetMargin(30); }}
+                onBlur={(e) => { 
+                  const v = !e.target.value || isNaN(e.target.value) ? 30 : parseFloat(e.target.value);
+                  saveTargetMargin(v);
+                }}
                 onWheel={(e) => e.target.blur()}
                 style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }}
               />
@@ -382,18 +415,21 @@ export default function Dashboard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', flex: 1 }}>
                 <div>
                   <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: '0 0 0.15rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Current</p>
-                  <input type="number" placeholder="0" value={inventory} onChange={(e) => setInventory(e.target.value)} onWheel={(e) => e.target.blur()} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }} />
+                  <input type="number" placeholder="0" value={inventory} 
+                    onChange={(e) => setInventory(e.target.value)}
+                    onBlur={(e) => saveInventory(e.target.value)}
+                    onWheel={(e) => e.target.blur()} 
+                    style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }} />
                 </div>
                 <div>
                   <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: '0 0 0.15rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Max Capacity</p>
-                  <input type="number" placeholder="0" value={capacity} readOnly style={{ width: '100%', background: '#0a0c10', color: '#6b7280', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }} />
+                  <input type="number" placeholder="0" value={capacity || ''} readOnly style={{ width: '100%', background: '#0a0c10', color: '#6b7280', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }} />
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Row 2: Listed | Effective | Margin Bullet */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
           <div style={cardStyle}>
             <p style={labelStyle}>Listed Price Charged</p>
@@ -401,13 +437,7 @@ export default function Dashboard() {
             {listedPrice !== null ? (
               <p style={{ fontSize: '1.8rem', fontWeight: 700, color: '#60a5fa', letterSpacing: '-0.04em', margin: '0.35rem 0' }}>${listedPrice.toFixed(3)}<span style={{ fontSize: '0.75rem', color: '#4b5563', fontWeight: 400 }}>/gal</span></p>
             ) : (
-              <input
-                type="number" step="0.01" placeholder="0.000"
-                value={manualPrice}
-                onChange={(e) => setManualPrice(e.target.value)}
-                onWheel={(e) => e.target.blur()}
-                style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1.5px solid #374151', borderRadius: '0.4rem', padding: '0.4rem 0.55rem', fontSize: '1.1rem', fontWeight: 600, outline: 'none', boxSizing: 'border-box', marginTop: '0.35rem' }}
-              />
+              <input type="number" step="0.01" placeholder="0.000" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} onWheel={(e) => e.target.blur()} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1.5px solid #374151', borderRadius: '0.4rem', padding: '0.4rem 0.55rem', fontSize: '1.1rem', fontWeight: 600, outline: 'none', boxSizing: 'border-box', marginTop: '0.35rem' }} />
             )}
             {listedMargin !== null && (
               <div style={{ marginTop: '0.3rem', borderTop: '1px solid #1a2030', paddingTop: '0.3rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -432,9 +462,7 @@ export default function Dashboard() {
               </div>
             )}
             {marginLeakage !== null && marginLeakage > 0.1 && (
-              <p style={{ fontSize: '0.6rem', color: '#f59e0b', margin: '0.2rem 0 0', fontWeight: 500 }}>
-                ↓ {marginLeakage.toFixed(1)} pts leakage
-              </p>
+              <p style={{ fontSize: '0.6rem', color: '#f59e0b', margin: '0.2rem 0 0', fontWeight: 500 }}>↓ {marginLeakage.toFixed(1)} pts leakage</p>
             )}
           </div>
 
@@ -478,21 +506,14 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Row 3: Margin Trend | Volume Trend | Tx Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: weekTrend.length > 0 ? '1.3fr 1.3fr 1fr' : '1fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
           {weekTrend.length > 0 && (
             <div style={cardStyle}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
-                <div>
-                  <p style={labelStyle}>Margin Trend (12 weeks)</p>
-                </div>
+                <div><p style={labelStyle}>Margin Trend (12 weeks)</p></div>
                 <div style={{ display: 'flex', gap: '0.7rem', fontSize: '0.6rem' }}>
-                  <span style={{ color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                    <span style={{ width: 8, height: 2, background: '#60a5fa', display: 'inline-block' }}></span> Listed
-                  </span>
-                  <span style={{ color: '#34d399', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                    <span style={{ width: 8, height: 2, background: '#34d399', display: 'inline-block' }}></span> Effective
-                  </span>
+                  <span style={{ color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><span style={{ width: 8, height: 2, background: '#60a5fa', display: 'inline-block' }}></span> Listed</span>
+                  <span style={{ color: '#34d399', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><span style={{ width: 8, height: 2, background: '#34d399', display: 'inline-block' }}></span> Effective</span>
                 </div>
               </div>
               <svg width="100%" viewBox={`0 0 ${MT_W} ${MT_H + 10}`} style={{ overflow: 'visible' }}>
@@ -536,9 +557,8 @@ export default function Dashboard() {
             const VT_W = 360, VT_H = 100, VT_PADL = 38, VT_PADB = 18, VT_PADT = 8;
             const vt_inW = VT_W - VT_PADL, vt_inH = VT_H - VT_PADB - VT_PADT;
             const vt_max = Math.max(...weekTrend.map(w => w.gallons)) * 1.1 || 100;
-            const vt_min = 0;
             const vt_X = (i) => VT_PADL + (i / Math.max(weekTrend.length - 1, 1)) * vt_inW;
-            const vt_Y = (v) => VT_PADT + vt_inH - ((v - vt_min) / (vt_max - vt_min)) * vt_inH;
+            const vt_Y = (v) => VT_PADT + vt_inH - (v / vt_max) * vt_inH;
             const barW = (vt_inW / weekTrend.length) * 0.6;
             const totalGalAllWeeks = weekTrend.reduce((s, w) => s + w.gallons, 0);
             const avgGalPerWeek = totalGalAllWeeks / weekTrend.length;
@@ -552,9 +572,7 @@ export default function Dashboard() {
                     <p style={sublabelStyle}>Gallons sold per week, last 12 weeks</p>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <p style={{ fontSize: '0.85rem', fontWeight: 700, color: wowChange >= 0 ? '#22c55e' : '#ef4444', margin: 0 }}>
-                      {wowChange >= 0 ? '▲' : '▼'} {Math.abs(wowChange).toFixed(1)}%
-                    </p>
+                    <p style={{ fontSize: '0.85rem', fontWeight: 700, color: wowChange >= 0 ? '#22c55e' : '#ef4444', margin: 0 }}>{wowChange >= 0 ? '▲' : '▼'} {Math.abs(wowChange).toFixed(1)}%</p>
                     <p style={{ fontSize: '0.55rem', color: '#374151', margin: 0 }}>WoW</p>
                   </div>
                 </div>
@@ -584,20 +602,15 @@ export default function Dashboard() {
 
           <div style={cardStyle}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-              <div>
-                <p style={labelStyle}>Transactions (2 days)</p>
-              </div>
+              <div><p style={labelStyle}>Transactions (2 days)</p></div>
               {recentTx.length > 0 && (
                 <button onClick={() => setShowTxTable(!showTxTable)} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.25rem 0.6rem', borderRadius: '0.35rem', fontSize: '0.65rem', cursor: 'pointer' }}>
                   {showTxTable ? '− Hide' : '+ Show'} ({recentTx.length})
                 </button>
               )}
             </div>
-
             {recentTx.length === 0 ? (
-              <p style={{ fontSize: '0.75rem', color: '#374151', textAlign: 'center', padding: '1rem 0', margin: 0 }}>
-                No transactions in last 2 days.
-              </p>
+              <p style={{ fontSize: '0.75rem', color: '#374151', textAlign: 'center', padding: '1rem 0', margin: 0 }}>No transactions in last 2 days.</p>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
                 <div>
@@ -623,7 +636,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Collapsible Tx Table */}
         {showTxTable && recentTx.length > 0 && (
           <div style={{ ...cardStyle, marginBottom: '0.85rem' }}>
             <div style={{ overflowX: 'auto', maxHeight: '300px', overflowY: 'auto' }}>
@@ -653,7 +665,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Footer */}
         <div style={{ borderTop: '1px solid #111827', paddingTop: '0.55rem', display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '0.55rem', color: '#1f2937', letterSpacing: '0.04em' }}>BOWLINE CAPITAL LLC · CONFIDENTIAL</span>
           <span style={{ fontSize: '0.55rem', color: '#1f2937' }}>USD/gallon</span>
@@ -677,12 +688,12 @@ export default function Dashboard() {
                 {editingVendor ? (
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
                     <input type="text" value={tempVendor} onChange={(e) => setTempVendor(e.target.value)} placeholder="Vendor name" style={{ flex: 1, background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }} />
-                    <button onClick={() => { setMarinaVendor(tempVendor); setEditingVendor(false); }} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.3rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 600 }}>Save</button>
+                    <button onClick={() => { saveVendor(tempVendor); setEditingVendor(false); }} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.3rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 600 }}>Save</button>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#060809', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem' }}>
-                    <span style={{ fontSize: '0.85rem', color: '#f9fafb' }}>{marinaVendor}</span>
-                    <button onClick={() => { setTempVendor(marinaVendor); setEditingVendor(true); }} style={{ background: 'transparent', border: 'none', color: '#60a5fa', fontSize: '0.7rem', cursor: 'pointer', textDecoration: 'underline' }}>Change</button>
+                    <span style={{ fontSize: '0.85rem', color: '#f9fafb' }}>{marina?.vendor || 'Loading...'}</span>
+                    <button onClick={() => { setTempVendor(marina?.vendor || ''); setEditingVendor(true); }} style={{ background: 'transparent', border: 'none', color: '#60a5fa', fontSize: '0.7rem', cursor: 'pointer', textDecoration: 'underline' }}>Change</button>
                   </div>
                 )}
               </div>
@@ -690,12 +701,7 @@ export default function Dashboard() {
               <div style={{ marginBottom: '0.85rem' }}>
                 <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Fuel Type</label>
                 <select value={invFuelType} onChange={(e) => setInvFuelType(e.target.value)} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box', cursor: 'pointer' }}>
-                  <option>87 Octane</option>
-                  <option>89 Octane</option>
-                  <option>90 Octane</option>
-                  <option>91 Octane</option>
-                  <option>93 Octane</option>
-                  <option>Diesel</option>
+                  <option>87 Octane</option><option>89 Octane</option><option>90 Octane</option><option>91 Octane</option><option>93 Octane</option><option>Diesel</option>
                 </select>
               </div>
 
@@ -704,24 +710,9 @@ export default function Dashboard() {
                 <input type="number" step="0.01" placeholder="0" value={invGallons} onChange={(e) => setInvGallons(e.target.value)} onWheel={(e) => e.target.blur()} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }} />
               </div>
 
-              <div style={{ marginBottom: '0.85rem' }}>
+              <div style={{ marginBottom: '1rem' }}>
                 <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Total Cost After Tax ($)</label>
                 <input type="number" step="0.01" placeholder="0.00" value={invTotalCost} onChange={(e) => setInvTotalCost(e.target.value)} onWheel={(e) => e.target.blur()} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }} />
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Invoice PDF (optional)</label>
-                {invPdfFileName ? (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#060809', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem' }}>
-                    <span style={{ fontSize: '0.75rem', color: '#34d399' }}>📄 {invPdfFileName}</span>
-                    <button onClick={() => { setInvPdfDataUrl(null); setInvPdfFileName(''); }} style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.7rem', cursor: 'pointer' }}>Remove</button>
-                  </div>
-                ) : (
-                  <label style={{ display: 'block', background: '#060809', border: '1px dashed #1f2937', borderRadius: '0.4rem', padding: '0.7rem 0.75rem', fontSize: '0.75rem', color: '#6b7280', cursor: 'pointer', textAlign: 'center' }}>
-                    📎 Click to attach invoice PDF
-                    <input type="file" accept="application/pdf" onChange={handlePdfUpload} style={{ display: 'none' }} />
-                  </label>
-                )}
               </div>
 
               {invGallons && invTotalCost && parseFloat(invGallons) > 0 && (
@@ -733,25 +724,20 @@ export default function Dashboard() {
 
               <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                 <button onClick={() => setShowInvoiceModal(false)} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.5rem 1rem', borderRadius: '0.4rem', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
-                <button onClick={handleSaveInvoice} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.5rem 1rem', borderRadius: '0.4rem', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}>Save Invoice</button>
+                <button onClick={handleSaveInvoice} disabled={saving} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.5rem 1rem', borderRadius: '0.4rem', fontSize: '0.75rem', cursor: saving ? 'wait' : 'pointer', fontWeight: 600, opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving...' : 'Save Invoice'}</button>
               </div>
 
               {invoices.length > 0 && (
                 <div style={{ marginTop: '1.5rem', borderTop: '1px solid #1a2030', paddingTop: '1rem' }}>
                   <p style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.5rem', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>Invoice History ({invoices.length})</p>
                   <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
-                    {[...invoices].sort((a, b) => new Date(b.date) - new Date(a.date)).map(inv => (
+                    {invoices.map(inv => (
                       <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0', borderBottom: '1px solid #111827', fontSize: '0.7rem' }}>
                         <div style={{ flex: 1 }}>
                           <p style={{ margin: 0, color: '#e5e7eb' }}>{inv.date} · {inv.fuelType}</p>
                           <p style={{ margin: 0, color: '#6b7280', fontSize: '0.6rem' }}>{inv.gallons.toLocaleString()} gal · ${inv.totalCost.toFixed(2)} · ${inv.pricePerGallon.toFixed(3)}/gal</p>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                          {inv.pdfDataUrl && (
-                            <button onClick={() => viewPdf(inv.pdfDataUrl)} style={{ background: 'transparent', border: '1px solid #1f2937', color: '#60a5fa', fontSize: '0.6rem', cursor: 'pointer', padding: '0.2rem 0.5rem', borderRadius: '0.3rem' }}>📄 View PDF</button>
-                          )}
-                          <button onClick={() => handleDeleteInvoice(inv.id)} style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.65rem', cursor: 'pointer' }}>Delete</button>
-                        </div>
+                        <button onClick={() => handleDeleteInvoice(inv.id)} style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.65rem', cursor: 'pointer' }}>Delete</button>
                       </div>
                     ))}
                   </div>
