@@ -1,72 +1,128 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import * as XLSX from 'xlsx';
 
 export default function Dashboard() {
-  const [gasPrice, setGasPrice] = useState(null);
-  const [priceHistory, setPriceHistory] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState(null);
-
   const [inventory, setInventory] = useState('');
   const [capacity, setCapacity] = useState('12000');
   const [manualPrice, setManualPrice] = useState('');
   const [targetMargin, setTargetMargin] = useState(30);
 
   const [transactions, setTransactions] = useState([]);
-  const [fileName, setFileName] = useState('');
+  const [sharperUpdated, setSharperUpdated] = useState(null);
   const [showTxTable, setShowTxTable] = useState(false);
 
-  useEffect(() => { fetchGasPrice(); }, []);
+  // Invoice state
+  const [invoices, setInvoices] = useState([]);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [marinaVendor, setMarinaVendor] = useState('Rossee Oil Co Inc');
+  const [editingVendor, setEditingVendor] = useState(false);
+  const [tempVendor, setTempVendor] = useState('');
+  const [invDate, setInvDate] = useState(new Date().toISOString().slice(0, 10));
+  const [invFuelType, setInvFuelType] = useState('90 Octane');
+  const [invGallons, setInvGallons] = useState('');
+  const [invTotalCost, setInvTotalCost] = useState('');
+  const [invPdfDataUrl, setInvPdfDataUrl] = useState(null);
+  const [invPdfFileName, setInvPdfFileName] = useState('');
+
+  useEffect(() => { fetchSharperTransactions(); }, []);
 
   useEffect(() => {
     setInventory(localStorage.getItem('inventory') || '');
     setCapacity(localStorage.getItem('capacity') || '12000');
     setManualPrice(localStorage.getItem('manualPrice') || '');
     setTargetMargin(parseFloat(localStorage.getItem('targetMargin')) || 30);
-    const savedTx = localStorage.getItem('transactions');
-    const savedFile = localStorage.getItem('fileName');
-    if (savedTx) setTransactions(JSON.parse(savedTx));
-    if (savedFile) setFileName(savedFile);
+    const savedInvoices = localStorage.getItem('invoices');
+    const savedVendor = localStorage.getItem('marinaVendor');
+    if (savedInvoices) setInvoices(JSON.parse(savedInvoices));
+    if (savedVendor) setMarinaVendor(savedVendor);
   }, []);
 
   useEffect(() => { localStorage.setItem('inventory', inventory); }, [inventory]);
   useEffect(() => { localStorage.setItem('capacity', capacity); }, [capacity]);
   useEffect(() => { localStorage.setItem('manualPrice', manualPrice); }, [manualPrice]);
   useEffect(() => { localStorage.setItem('targetMargin', targetMargin); }, [targetMargin]);
+  useEffect(() => {
+    try { localStorage.setItem('invoices', JSON.stringify(invoices)); }
+    catch (e) { alert('Storage limit reached. Consider removing older invoices.'); }
+  }, [invoices]);
+  useEffect(() => { localStorage.setItem('marinaVendor', marinaVendor); }, [marinaVendor]);
 
-  async function fetchGasPrice() {
-    setLoading(true);
-    try {
-      const apiKey = 'jkNaDyJwqeaLq5cscpajJhopgyu8rvR85mQmJKk3';
-      const url = `https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key=${apiKey}&frequency=weekly&data[0]=value&facets[product][]=EPM0U&facets[duoarea][]=R1Z&sort[0][column]=period&sort[0][direction]=desc&length=12`;
-      const res = await fetch(url);
-      const data = await res.json();
-      const entries = data?.response?.data || [];
-      setPriceHistory([...entries].reverse());
-      setGasPrice(parseFloat(entries[0]?.value));
-      setLastUpdated(new Date().toLocaleString());
-    } catch (err) { console.error(err); } finally { setLoading(false); }
-  }
-
-  function handleFileUpload(e) {
+  function handlePdfUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.type !== 'application/pdf') {
+      alert('Please upload a PDF file');
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      alert('PDF must be under 4MB for browser storage');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (evt) => {
-      const data = new Uint8Array(evt.target.result);
-      const wb = XLSX.read(data, { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      const parsed = rows.map(r => {
-        const clean = (v) => parseFloat(String(v).replace(/[$,]/g, '')) || 0;
-        const subtotal = clean(r['Subtotal']);
-        const discount = clean(r['Discount']);
-        const total = clean(r['Total']);
-        const qty = parseFloat(r['Quantity']) || 0;
+      setInvPdfDataUrl(evt.target.result);
+      setInvPdfFileName(file.name);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleSaveInvoice() {
+    if (!invDate || !invGallons || !invTotalCost) {
+      alert('Please fill in date, gallons, and total cost');
+      return;
+    }
+    const gallons = parseFloat(invGallons);
+    const totalCost = parseFloat(invTotalCost);
+    if (gallons <= 0 || totalCost <= 0) {
+      alert('Gallons and Total Cost must be positive');
+      return;
+    }
+    const newInvoice = {
+      id: Date.now(),
+      date: invDate,
+      vendor: marinaVendor,
+      fuelType: invFuelType,
+      gallons,
+      totalCost,
+      pricePerGallon: totalCost / gallons,
+      pdfDataUrl: invPdfDataUrl,
+      pdfFileName: invPdfFileName,
+    };
+    setInvoices([...invoices, newInvoice]);
+    setInvDate(new Date().toISOString().slice(0, 10));
+    setInvGallons('');
+    setInvTotalCost('');
+    setInvPdfDataUrl(null);
+    setInvPdfFileName('');
+    setShowInvoiceModal(false);
+  }
+
+  function handleDeleteInvoice(id) {
+    if (confirm('Delete this invoice?')) {
+      setInvoices(invoices.filter(inv => inv.id !== id));
+    }
+  }
+
+  function viewPdf(dataUrl) {
+    const w = window.open();
+    w.document.write(`<iframe src="${dataUrl}" style="width:100%;height:100vh;border:none;"></iframe>`);
+  }
+  
+  async function fetchSharperTransactions() {
+    try {
+      const res = await fetch('/api/sharper');
+      const data = await res.json();
+      if (!data.transactions) return;
+      const parsed = data.transactions.map(r => {
+        const subtotal = parseFloat(r.itm_subtotal) || 0;
+        const discount = parseFloat(r.itm_discount) || 0;
+        const total = parseFloat(r.itm_total) || 0;
+        const qty = parseFloat(r.itm_quantity) || 0;
         return {
-          time: r['Order Time'], date: r['Order Date'], quantity: qty,
+          time: r.ord_time_created,
+          date: r.ord_date_created,
+          quantity: qty,
           subtotal, discount, total,
           listedPerGal: qty ? subtotal / qty : 0,
           effectivePerGal: qty ? total / qty : 0,
@@ -74,11 +130,10 @@ export default function Dashboard() {
         };
       }).filter(t => t.quantity > 0);
       setTransactions(parsed);
-      setFileName(file.name);
-      localStorage.setItem('transactions', JSON.stringify(parsed));
-      localStorage.setItem('fileName', file.name);
-    };
-    reader.readAsArrayBuffer(file);
+      setSharperUpdated(new Date().toLocaleString());
+    } catch (err) {
+      console.error('Failed to fetch Sharper data:', err);
+    }
   }
 
   const parseDate = (d) => { if (!d) return null; const dt = new Date(d); return isNaN(dt) ? null : dt; };
@@ -86,6 +141,22 @@ export default function Dashboard() {
   const maxDate = allTxWithDate.length ? new Date(Math.max(...allTxWithDate.map(t => t.dateObj))) : null;
   const cutoff = maxDate ? new Date(maxDate.getTime() - 2 * 24 * 60 * 60 * 1000) : null;
   const recentTx = allTxWithDate.filter(t => t.dateObj > cutoff).sort((a, b) => new Date(b.time) - new Date(a.time));
+  const mostRecentInvoice = invoices.length > 0 
+    ? [...invoices].sort((a, b) => new Date(b.date) - new Date(a.date))[0] 
+    : null;
+  const effectiveCOGS = mostRecentInvoice ? mostRecentInvoice.pricePerGallon : null;
+
+  // Invoice chart: last 3 months
+  const invoiceChartData = (() => {
+    if (invoices.length < 2) return null;
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const recent = invoices
+      .filter(inv => new Date(inv.date) >= ninetyDaysAgo)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    if (recent.length < 2) return null;
+    return recent;
+  })();
 
   const totalGallons = recentTx.reduce((s, t) => s + t.quantity, 0);
   const totalSubtotal = recentTx.reduce((s, t) => s + t.subtotal, 0);
@@ -98,7 +169,7 @@ export default function Dashboard() {
   const hasTxData = recentTx.length > 0;
 
   const weekTrend = (() => {
-    if (allTxWithDate.length === 0 || !gasPrice) return [];
+    if (allTxWithDate.length === 0 || !effectiveCOGS) return [];
     const buckets = {};
     allTxWithDate.forEach(t => {
       const d = t.dateObj;
@@ -116,41 +187,34 @@ export default function Dashboard() {
       const b = buckets[k];
       const listedP = b.qty ? b.subtotal / b.qty : 0;
       const effectiveP = b.qty ? b.total / b.qty : 0;
-      const listedM = listedP && gasPrice ? ((listedP - gasPrice) / listedP) * 100 : 0;
-      const effectiveM = effectiveP && gasPrice ? ((effectiveP - gasPrice) / effectiveP) * 100 : 0;
+      const listedM = listedP && effectiveCOGS ? ((listedP - effectiveCOGS) / listedP) * 100 : 0;
+      const effectiveM = effectiveP && effectiveCOGS ? ((effectiveP - effectiveCOGS) / effectiveP) * 100 : 0;
       return { week: k, listedMargin: listedM, effectiveMargin: effectiveM, count: b.count, gallons: b.qty };
     });
   })();
 
   const listedPrice = hasTxData ? listedAvg : (manualPrice ? parseFloat(manualPrice) : null);
   const effectivePrice = hasTxData ? effectiveAvg : listedPrice;
-  const suggestedPrice = gasPrice ? (gasPrice / (1 - targetMargin / 100)).toFixed(2) : null;
-  const listedMargin = listedPrice && gasPrice ? (((listedPrice - gasPrice) / listedPrice) * 100) : null;
-  const effectiveMargin = effectivePrice && gasPrice ? (((effectivePrice - gasPrice) / effectivePrice) * 100) : null;
+  const suggestedPrice = effectiveCOGS ? (effectiveCOGS / (1 - targetMargin / 100)).toFixed(2) : null;
+  const listedMargin = listedPrice && effectiveCOGS ? (((listedPrice - effectiveCOGS) / listedPrice) * 100) : null;
+  const effectiveMargin = effectivePrice && effectiveCOGS ? (((effectivePrice - effectiveCOGS) / effectivePrice) * 100) : null;
   const marginDeviation = effectiveMargin !== null ? (effectiveMargin - targetMargin) : null;
   const marginLeakage = listedMargin !== null && effectiveMargin !== null ? listedMargin - effectiveMargin : null;
   const inventoryPct = inventory && capacity ? Math.min((parseFloat(inventory) / parseFloat(capacity)) * 100, 100) : null;
 
-  const getStatus = () => {
-    if (effectiveMargin === null) return null;
-    const dev = marginDeviation;
-    if (Math.abs(dev) < 2) return { label: 'Margin On Target', color: '#22c55e', bg: 'rgba(34,197,94,0.08)', border: 'rgba(34,197,94,0.25)' };
-    if (Math.abs(dev) >= 5) return { label: 'Immediate Price Update Needed', color: '#ef4444', bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.25)' };
-    return { label: dev < 0 ? 'Price Adjustment Recommended' : 'Above Target Margin', color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.25)' };
-  };
-  const status = getStatus();
-
-  const CHART_W = 340, CHART_H = 80, PAD_L = 38, PAD_B = 20, PAD_T = 8;
-  const innerW = CHART_W - PAD_L, innerH = CHART_H - PAD_B - PAD_T;
-  const prices = priceHistory.map(d => parseFloat(d.value));
-  const minP = prices.length ? Math.floor((Math.min(...prices) - 0.05) * 20) / 20 : 0;
-  const maxP = prices.length ? Math.ceil((Math.max(...prices) + 0.05) * 20) / 20 : 5;
-  const toX = (i) => PAD_L + (i / (prices.length - 1)) * innerW;
-  const toY = (v) => PAD_T + innerH - ((v - minP) / (maxP - minP)) * innerH;
-  const sparklinePath = prices.length > 1 ? prices.map((v, i) => `${i === 0 ? 'M' : 'L'} ${toX(i)} ${toY(v)}`).join(' ') : '';
-  const areaPath = prices.length > 1 ? `${sparklinePath} L ${toX(prices.length - 1)} ${PAD_T + innerH} L ${PAD_L} ${PAD_T + innerH} Z` : '';
-  const yTicks = [minP, (minP + maxP) / 2, maxP];
-  const xLabels = priceHistory.filter((_, i) => i === 0 || i === Math.floor(priceHistory.length / 2) || i === priceHistory.length - 1);
+  // Invoice chart SVG dimensions
+  const IC_W = 340, IC_H = 80, IC_PADL = 40, IC_PADB = 20, IC_PADT = 8;
+  const ic_inW = IC_W - IC_PADL, ic_inH = IC_H - IC_PADB - IC_PADT;
+  const ic_prices = invoiceChartData ? invoiceChartData.map(i => i.pricePerGallon) : [];
+  const ic_minP = ic_prices.length ? Math.floor((Math.min(...ic_prices) - 0.1) * 10) / 10 : 0;
+  const ic_maxP = ic_prices.length ? Math.ceil((Math.max(...ic_prices) + 0.1) * 10) / 10 : 5;
+  const ic_dates = invoiceChartData ? invoiceChartData.map(i => new Date(i.date).getTime()) : [];
+  const ic_minD = ic_dates.length ? Math.min(...ic_dates) : 0;
+  const ic_maxD = ic_dates.length ? Math.max(...ic_dates) : 1;
+  const ic_X = (d) => IC_PADL + ((d - ic_minD) / (ic_maxD - ic_minD || 1)) * ic_inW;
+  const ic_Y = (v) => IC_PADT + ic_inH - ((v - ic_minP) / (ic_maxP - ic_minP)) * ic_inH;
+  const ic_path = invoiceChartData ? invoiceChartData.map((inv, i) => `${i === 0 ? 'M' : 'L'} ${ic_X(new Date(inv.date).getTime())} ${ic_Y(inv.pricePerGallon)}`).join(' ') : '';
+  const ic_yTicks = [ic_minP, (ic_minP + ic_maxP) / 2, ic_maxP];
 
   const MT_W = 360, MT_H = 100, MT_PADL = 38, MT_PADB = 18, MT_PADT = 8;
   const mt_inW = MT_W - MT_PADL, mt_inH = MT_H - MT_PADB - MT_PADT;
@@ -187,64 +251,98 @@ export default function Dashboard() {
               <span style={{ fontSize: '0.6rem', fontWeight: 500, letterSpacing: '0.08em', color: '#4b5563', textTransform: 'uppercase' }}>Fuel Margins</span>
             </div>
             <h1 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.03em', color: '#f9fafb', margin: 0 }}>Lake Oconee Marina</h1>
-            <p style={{ fontSize: '0.7rem', color: '#4b5563', marginTop: '0.1rem' }}>144 Collis Marina Rd NE · Eatonton, GA 31024 {lastUpdated && `· Updated ${lastUpdated}`}</p>
+            <p style={{ fontSize: '0.7rem', color: '#4b5563', marginTop: '0.1rem' }}>144 Collis Marina Rd NE · Eatonton, GA 31024 · Region: Georgia · Vendor: {marinaVendor}</p>
+            {sharperUpdated && <p style={{ fontSize: '0.6rem', color: '#374151', margin: '0.2rem 0 0' }}>Sharper synced: {sharperUpdated}</p>}
           </div>
           <div style={{ display: 'flex', gap: '0.4rem' }}>
-            <label style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.35rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer' }}>
-              ↑ Upload Report
-              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} style={{ display: 'none' }} />
-            </label>
-            <button onClick={fetchGasPrice} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.35rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer' }}>↻ Refresh</button>
+            <button onClick={() => setShowInvoiceModal(true)} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.35rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 600 }}>
+              + Log Invoice {invoices.length > 0 && <span style={{ color: '#60a5fa', marginLeft: '0.25rem' }}>({invoices.length})</span>}
+            </button>
+            <button onClick={fetchSharperTransactions} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.35rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer' }}>↻ Refresh</button>
           </div>
         </div>
 
-        {/* Status Banner */}
-        {status && (
-          <div style={{ background: status.bg, border: `1px solid ${status.border}`, borderRadius: '0.5rem', padding: '0.5rem 0.9rem', marginBottom: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <div style={{ width: 7, height: 7, borderRadius: '50%', background: status.color, flexShrink: 0 }} />
-            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: status.color, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{status.label}</span>
-            <span style={{ fontSize: '0.72rem', color: '#6b7280', marginLeft: '0.4rem' }}>
-              Effective margin {effectiveMargin?.toFixed(1)}% vs. target {targetMargin}%
+        {/* Simplified Status Banner */}
+        {effectiveMargin !== null && (
+          <div style={{ background: '#0d1117', border: '1px solid #1a2030', borderRadius: '0.5rem', padding: '0.5rem 0.9rem', marginBottom: '0.85rem' }}>
+            <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>
+              Effective margin <span style={{ color: '#34d399', fontWeight: 700 }}>{effectiveMargin.toFixed(1)}%</span> vs. target <span style={{ color: '#60a5fa', fontWeight: 700 }}>{targetMargin}%</span>
             </span>
           </div>
         )}
 
-        {/* Row 1: Market | Suggested | Inventory */}
+        {/* Row 1: COGS | Suggested | Inventory */}
         <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
 
           <div style={cardStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.15rem' }}>
-              <p style={labelStyle}>Market Gas Price (Reference COGS)</p>
-              <span style={{ fontSize: '0.55rem', color: '#374151', background: '#111827', border: '1px solid #1f2937', borderRadius: '4px', padding: '1px 5px' }}>EIA · SE Lower Atlantic</span>
-            </div>
-            {loading ? <p style={{ color: '#374151', fontSize: '0.85rem', margin: '0.5rem 0' }}>Fetching...</p> : gasPrice ? (
+            {mostRecentInvoice ? (
               <>
-                <p style={{ fontSize: '2rem', fontWeight: 700, color: '#34d399', letterSpacing: '-0.04em', margin: '0.3rem 0 0.5rem' }}>${gasPrice.toFixed(3)}<span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 400 }}>/gal</span></p>
-                {prices.length > 1 && (
-                  <svg width="100%" viewBox={`0 0 ${CHART_W} ${CHART_H + 10}`} style={{ overflow: 'visible' }}>
-                    <defs>
-                      <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#34d399" stopOpacity="0.15" />
-                        <stop offset="100%" stopColor="#34d399" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    {yTicks.map((tick, i) => (
-                      <g key={i}>
-                        <line x1={PAD_L} y1={toY(tick)} x2={CHART_W} y2={toY(tick)} stroke="#1a2030" strokeWidth="1" strokeDasharray="3,3" />
-                        <text x={PAD_L - 4} y={toY(tick) + 4} textAnchor="end" fontSize="8" fill="#374151">${tick.toFixed(2)}</text>
-                      </g>
-                    ))}
-                    <path d={areaPath} fill="url(#areaGrad)" />
-                    <path d={sparklinePath} fill="none" stroke="#34d399" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    {prices.map((v, i) => <circle key={i} cx={toX(i)} cy={toY(v)} r="2" fill="#34d399" />)}
-                    {xLabels.map((entry, i) => {
-                      const idx = priceHistory.indexOf(entry);
-                      return <text key={i} x={toX(idx)} y={CHART_H + 6} textAnchor="middle" fontSize="7.5" fill="#374151">{entry.period?.slice(5)}</text>;
-                    })}
-                  </svg>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.15rem' }}>
+                  <p style={labelStyle}>Effective COGS · Last Invoice</p>
+                  <span style={{ fontSize: '0.55rem', color: '#374151', background: '#111827', border: '1px solid #1f2937', borderRadius: '4px', padding: '1px 5px' }}>{mostRecentInvoice.vendor}</span>
+                </div>
+                <p style={{ fontSize: '2rem', fontWeight: 700, color: '#fbbf24', letterSpacing: '-0.04em', margin: '0.3rem 0' }}>
+                  ${mostRecentInvoice.pricePerGallon.toFixed(3)}<span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 400 }}>/gal</span>
+                </p>
+                <div style={{ borderTop: '1px solid #1a2030', paddingTop: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem' }}>
+                  <div>
+                    <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Date</p>
+                    <p style={{ fontSize: '0.75rem', color: '#e5e7eb', margin: '0.15rem 0 0', fontWeight: 600 }}>{mostRecentInvoice.date}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Gallons</p>
+                    <p style={{ fontSize: '0.75rem', color: '#e5e7eb', margin: '0.15rem 0 0', fontWeight: 600 }}>{mostRecentInvoice.gallons.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Total</p>
+                    <p style={{ fontSize: '0.75rem', color: '#e5e7eb', margin: '0.15rem 0 0', fontWeight: 600 }}>${mostRecentInvoice.totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  </div>
+                </div>
+                {invoiceChartData && (
+                  <div style={{ marginTop: '0.6rem' }}>
+                    <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: '0 0 0.2rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>COGS Trend · Last 3 Months</p>
+                    <svg width="100%" viewBox={`0 0 ${IC_W} ${IC_H + 10}`} style={{ overflow: 'visible' }}>
+                      <defs>
+                        <linearGradient id="invoiceGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.15" />
+                          <stop offset="100%" stopColor="#fbbf24" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      {ic_yTicks.map((tick, i) => (
+                        <g key={i}>
+                          <line x1={IC_PADL} y1={ic_Y(tick)} x2={IC_W} y2={ic_Y(tick)} stroke="#1a2030" strokeWidth="1" strokeDasharray="3,3" />
+                          <text x={IC_PADL - 4} y={ic_Y(tick) + 3} textAnchor="end" fontSize="8" fill="#374151">${tick.toFixed(2)}</text>
+                        </g>
+                      ))}
+                      <path d={`${ic_path} L ${ic_X(ic_maxD)} ${IC_PADT + ic_inH} L ${ic_X(ic_minD)} ${IC_PADT + ic_inH} Z`} fill="url(#invoiceGrad)" />
+                      <path d={ic_path} fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      {invoiceChartData.map((inv, i) => (
+                        <circle key={i} cx={ic_X(new Date(inv.date).getTime())} cy={ic_Y(inv.pricePerGallon)} r="2.5" fill="#fbbf24" />
+                      ))}
+                      {invoiceChartData.map((inv, i) => {
+                        if (i === 0 || i === invoiceChartData.length - 1) {
+                          return <text key={i} x={ic_X(new Date(inv.date).getTime())} y={IC_H + 4} textAnchor="middle" fontSize="7.5" fill="#374151">{inv.date.slice(5)}</text>;
+                        }
+                        return null;
+                      })}
+                    </svg>
+                  </div>
                 )}
+                <p style={{ fontSize: '0.55rem', color: '#374151', margin: '0.4rem 0 0', textAlign: 'right' }}>{mostRecentInvoice.fuelType}</p>
               </>
-            ) : <p style={{ color: '#ef4444' }}>Unavailable</p>}
+            ) : (
+              <>
+                <p style={labelStyle}>Effective COGS</p>
+                <p style={sublabelStyle}>From fuel invoices</p>
+                <div style={{ padding: '2rem 0', textAlign: 'center' }}>
+                  <p style={{ fontSize: '1.4rem', color: '#374151', margin: 0, fontWeight: 600 }}>—</p>
+                  <p style={{ fontSize: '0.65rem', color: '#6b7280', margin: '0.5rem 0 0' }}>No fuel invoices logged yet</p>
+                  <button onClick={() => setShowInvoiceModal(true)} style={{ marginTop: '0.6rem', background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.4rem 0.9rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 600 }}>
+                    + Log First Invoice
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
           <div style={cardStyle}>
@@ -288,7 +386,7 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: '0 0 0.15rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Max Capacity</p>
-                  <input type="number" placeholder="0" value={capacity} onChange={(e) => setCapacity(e.target.value)} onWheel={(e) => e.target.blur()} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }} />
+                  <input type="number" placeholder="0" value={capacity} readOnly style={{ width: '100%', background: '#0a0c10', color: '#6b7280', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }} />
                 </div>
               </div>
             </div>
@@ -299,7 +397,7 @@ export default function Dashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
           <div style={cardStyle}>
             <p style={labelStyle}>Listed Price Charged</p>
-            <p style={sublabelStyle}>{hasTxData ? `Vol-weighted · ${recentTx.length} tx` : 'Manual entry'}</p>
+            <p style={sublabelStyle}>{hasTxData ? `Live from Sharper · ${recentTx.length} tx (2 days)` : 'Manual entry'}</p>
             {listedPrice !== null ? (
               <p style={{ fontSize: '1.8rem', fontWeight: 700, color: '#60a5fa', letterSpacing: '-0.04em', margin: '0.35rem 0' }}>${listedPrice.toFixed(3)}<span style={{ fontSize: '0.75rem', color: '#4b5563', fontWeight: 400 }}>/gal</span></p>
             ) : (
@@ -488,7 +586,6 @@ export default function Dashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
               <div>
                 <p style={labelStyle}>Transactions (2 days)</p>
-                {fileName && <p style={sublabelStyle}>{fileName}</p>}
               </div>
               {recentTx.length > 0 && (
                 <button onClick={() => setShowTxTable(!showTxTable)} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.25rem 0.6rem', borderRadius: '0.35rem', fontSize: '0.65rem', cursor: 'pointer' }}>
@@ -499,7 +596,7 @@ export default function Dashboard() {
 
             {recentTx.length === 0 ? (
               <p style={{ fontSize: '0.75rem', color: '#374151', textAlign: 'center', padding: '1rem 0', margin: 0 }}>
-                {transactions.length === 0 ? 'Upload a Sharper export.' : 'No transactions in last 2 days.'}
+                No transactions in last 2 days.
               </p>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
@@ -514,11 +611,11 @@ export default function Dashboard() {
                   <p style={{ fontSize: '0.55rem', color: '#374151', margin: 0 }}>on discounted</p>
                 </div>
                 <div>
-                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Listed Avg</p>
+                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Listed Price</p>
                   <p style={{ fontSize: '1.1rem', fontWeight: 700, color: '#60a5fa', margin: '0.1rem 0 0' }}>${listedAvg?.toFixed(3)}</p>
                 </div>
                 <div>
-                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Effective Avg</p>
+                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Effective Price</p>
                   <p style={{ fontSize: '1.1rem', fontWeight: 700, color: '#34d399', margin: '0.1rem 0 0' }}>${effectiveAvg?.toFixed(3)}</p>
                 </div>
               </div>
@@ -559,8 +656,110 @@ export default function Dashboard() {
         {/* Footer */}
         <div style={{ borderTop: '1px solid #111827', paddingTop: '0.55rem', display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '0.55rem', color: '#1f2937', letterSpacing: '0.04em' }}>BOWLINE CAPITAL LLC · CONFIDENTIAL</span>
-          <span style={{ fontSize: '0.55rem', color: '#1f2937' }}>EIA weekly · USD/gallon</span>
+          <span style={{ fontSize: '0.55rem', color: '#1f2937' }}>USD/gallon</span>
         </div>
+
+        {showInvoiceModal && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowInvoiceModal(false)}>
+            <div style={{ background: '#0d1117', border: '1px solid #1f2937', borderRadius: '0.75rem', padding: '1.5rem', maxWidth: '500px', width: '90%', maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h2 style={{ fontSize: '1rem', fontWeight: 700, color: '#f9fafb', margin: 0, letterSpacing: '-0.02em' }}>Log Fuel Invoice</h2>
+                <button onClick={() => setShowInvoiceModal(false)} style={{ background: 'transparent', border: 'none', color: '#6b7280', fontSize: '1.4rem', cursor: 'pointer', lineHeight: 1 }}>×</button>
+              </div>
+
+              <div style={{ marginBottom: '0.85rem' }}>
+                <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Invoice Date</label>
+                <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }} />
+              </div>
+
+              <div style={{ marginBottom: '0.85rem' }}>
+                <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Vendor</label>
+                {editingVendor ? (
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <input type="text" value={tempVendor} onChange={(e) => setTempVendor(e.target.value)} placeholder="Vendor name" style={{ flex: 1, background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }} />
+                    <button onClick={() => { setMarinaVendor(tempVendor); setEditingVendor(false); }} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.3rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 600 }}>Save</button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#060809', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem' }}>
+                    <span style={{ fontSize: '0.85rem', color: '#f9fafb' }}>{marinaVendor}</span>
+                    <button onClick={() => { setTempVendor(marinaVendor); setEditingVendor(true); }} style={{ background: 'transparent', border: 'none', color: '#60a5fa', fontSize: '0.7rem', cursor: 'pointer', textDecoration: 'underline' }}>Change</button>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginBottom: '0.85rem' }}>
+                <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Fuel Type</label>
+                <select value={invFuelType} onChange={(e) => setInvFuelType(e.target.value)} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box', cursor: 'pointer' }}>
+                  <option>87 Octane</option>
+                  <option>89 Octane</option>
+                  <option>90 Octane</option>
+                  <option>91 Octane</option>
+                  <option>93 Octane</option>
+                  <option>Diesel</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '0.85rem' }}>
+                <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Gallons Delivered</label>
+                <input type="number" step="0.01" placeholder="0" value={invGallons} onChange={(e) => setInvGallons(e.target.value)} onWheel={(e) => e.target.blur()} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }} />
+              </div>
+
+              <div style={{ marginBottom: '0.85rem' }}>
+                <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Total Cost After Tax ($)</label>
+                <input type="number" step="0.01" placeholder="0.00" value={invTotalCost} onChange={(e) => setInvTotalCost(e.target.value)} onWheel={(e) => e.target.blur()} style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }} />
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', fontWeight: 600 }}>Invoice PDF (optional)</label>
+                {invPdfFileName ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#060809', border: '1px solid #1f2937', borderRadius: '0.4rem', padding: '0.5rem 0.75rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#34d399' }}>📄 {invPdfFileName}</span>
+                    <button onClick={() => { setInvPdfDataUrl(null); setInvPdfFileName(''); }} style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.7rem', cursor: 'pointer' }}>Remove</button>
+                  </div>
+                ) : (
+                  <label style={{ display: 'block', background: '#060809', border: '1px dashed #1f2937', borderRadius: '0.4rem', padding: '0.7rem 0.75rem', fontSize: '0.75rem', color: '#6b7280', cursor: 'pointer', textAlign: 'center' }}>
+                    📎 Click to attach invoice PDF
+                    <input type="file" accept="application/pdf" onChange={handlePdfUpload} style={{ display: 'none' }} />
+                  </label>
+                )}
+              </div>
+
+              {invGallons && invTotalCost && parseFloat(invGallons) > 0 && (
+                <div style={{ background: 'rgba(251, 191, 36, 0.08)', border: '1px solid rgba(251, 191, 36, 0.25)', borderRadius: '0.4rem', padding: '0.6rem 0.85rem', marginBottom: '1rem' }}>
+                  <p style={{ fontSize: '0.6rem', color: '#9ca3af', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Cost per Gallon (after tax)</p>
+                  <p style={{ fontSize: '1.4rem', fontWeight: 700, color: '#fbbf24', margin: '0.1rem 0 0', letterSpacing: '-0.03em' }}>${(parseFloat(invTotalCost) / parseFloat(invGallons)).toFixed(4)}<span style={{ fontSize: '0.7rem', color: '#6b7280', fontWeight: 400 }}>/gal</span></p>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                <button onClick={() => setShowInvoiceModal(false)} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.5rem 1rem', borderRadius: '0.4rem', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
+                <button onClick={handleSaveInvoice} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.5rem 1rem', borderRadius: '0.4rem', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}>Save Invoice</button>
+              </div>
+
+              {invoices.length > 0 && (
+                <div style={{ marginTop: '1.5rem', borderTop: '1px solid #1a2030', paddingTop: '1rem' }}>
+                  <p style={{ fontSize: '0.6rem', color: '#9ca3af', margin: '0 0 0.5rem', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>Invoice History ({invoices.length})</p>
+                  <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                    {[...invoices].sort((a, b) => new Date(b.date) - new Date(a.date)).map(inv => (
+                      <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0', borderBottom: '1px solid #111827', fontSize: '0.7rem' }}>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ margin: 0, color: '#e5e7eb' }}>{inv.date} · {inv.fuelType}</p>
+                          <p style={{ margin: 0, color: '#6b7280', fontSize: '0.6rem' }}>{inv.gallons.toLocaleString()} gal · ${inv.totalCost.toFixed(2)} · ${inv.pricePerGallon.toFixed(3)}/gal</p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          {inv.pdfDataUrl && (
+                            <button onClick={() => viewPdf(inv.pdfDataUrl)} style={{ background: 'transparent', border: '1px solid #1f2937', color: '#60a5fa', fontSize: '0.6rem', cursor: 'pointer', padding: '0.2rem 0.5rem', borderRadius: '0.3rem' }}>📄 View PDF</button>
+                          )}
+                          <button onClick={() => handleDeleteInvoice(inv.id)} style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.65rem', cursor: 'pointer' }}>Delete</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
       </div>
     </main>
