@@ -294,14 +294,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {effectiveMargin !== null && (
-          <div style={{ background: '#0d1117', border: '1px solid #1a2030', borderRadius: '0.5rem', padding: '0.5rem 0.9rem', marginBottom: '0.85rem' }}>
-            <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>
-              Effective margin <span style={{ color: '#34d399', fontWeight: 700 }}>{effectiveMargin.toFixed(1)}%</span> vs. target <span style={{ color: '#60a5fa', fontWeight: 700 }}>{targetMargin}%</span>
-            </span>
-          </div>
-        )}
-
         <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
 
           <div style={cardStyle}>
