@@ -5,17 +5,13 @@ import { useState, useEffect } from 'react';
 const MARINA_NAME = 'lake-oconee';
 
 export default function Dashboard() {
-  // Marina settings from DB
   const [marina, setMarina] = useState(null);
-  const [inventory, setInventory] = useState('');
   const [targetMargin, setTargetMargin] = useState(30);
 
-  // Sharper transactions
   const [transactions, setTransactions] = useState([]);
   const [sharperUpdated, setSharperUpdated] = useState(null);
   const [showTxTable, setShowTxTable] = useState(false);
 
-  // Invoices from DB
   const [invoices, setInvoices] = useState([]);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [editingVendor, setEditingVendor] = useState(false);
@@ -39,7 +35,6 @@ export default function Dashboard() {
       const data = await res.json();
       if (data.marina) {
         setMarina(data.marina);
-        setInventory(data.marina.current_inventory || '');
         setTargetMargin(parseFloat(data.marina.target_margin) || 30);
       }
     } catch (err) { console.error('Failed to fetch marina:', err); }
@@ -85,17 +80,6 @@ export default function Dashboard() {
       setTransactions(parsed);
       setSharperUpdated(new Date().toLocaleString());
     } catch (err) { console.error('Failed to fetch Sharper data:', err); }
-  }
-
-  async function saveInventory(value) {
-    setInventory(value);
-    try {
-      await fetch('/api/marina', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: MARINA_NAME, current_inventory: value === '' ? null : parseFloat(value) }),
-      });
-    } catch (err) { console.error('Failed to save inventory:', err); }
   }
 
   async function saveTargetMargin(value) {
@@ -179,6 +163,18 @@ export default function Dashboard() {
   const mostRecentInvoice = invoices.length > 0 ? invoices[0] : null;
   const effectiveCOGS = mostRecentInvoice ? mostRecentInvoice.pricePerGallon : null;
 
+  const sevenDayCutoff = maxDate ? new Date(maxDate.getTime() - 7 * 24 * 60 * 60 * 1000) : null;
+  const last7Tx = allTxWithDate.filter(t => t.dateObj > sevenDayCutoff);
+  const gp7dRevenue = last7Tx.reduce((s, t) => s + t.total, 0);
+  const gp7dGallons = last7Tx.reduce((s, t) => s + t.quantity, 0);
+  const gp7dCost = effectiveCOGS ? gp7dGallons * effectiveCOGS : null;
+  const grossProfit7d = gp7dCost !== null ? gp7dRevenue - gp7dCost : null;
+  const priorCutoffStart = maxDate ? new Date(maxDate.getTime() - 14 * 24 * 60 * 60 * 1000) : null;
+  const prior7Tx = allTxWithDate.filter(t => t.dateObj > priorCutoffStart && t.dateObj <= sevenDayCutoff);
+  const prior7Cost = effectiveCOGS ? prior7Tx.reduce((s, t) => s + t.quantity, 0) * effectiveCOGS : null;
+  const priorGrossProfit7d = prior7Cost !== null ? prior7Tx.reduce((s, t) => s + t.total, 0) - prior7Cost : null;
+  const gpWowChange = (priorGrossProfit7d && priorGrossProfit7d !== 0) ? ((grossProfit7d - priorGrossProfit7d) / priorGrossProfit7d) * 100 : null;
+
   const invoiceChartData = (() => {
     if (invoices.length < 2) return null;
     const ninetyDaysAgo = new Date();
@@ -232,11 +228,9 @@ export default function Dashboard() {
   const effectiveMargin = effectivePrice && effectiveCOGS ? (((effectivePrice - effectiveCOGS) / effectivePrice) * 100) : null;
   const marginDeviation = effectiveMargin !== null ? (effectiveMargin - targetMargin) : null;
   const marginLeakage = listedMargin !== null && effectiveMargin !== null ? listedMargin - effectiveMargin : null;
-  const capacity = marina?.max_capacity ? parseFloat(marina.max_capacity) : null;
-  const inventoryPct = inventory && capacity ? Math.min((parseFloat(inventory) / capacity) * 100, 100) : null;
 
-  const IC_W = 340, IC_H = 80, IC_PADL = 40, IC_PADB = 20, IC_PADT = 8;
-  const ic_inW = IC_W - IC_PADL, ic_inH = IC_H - IC_PADB - IC_PADT;
+  const IC_W = 340, IC_H = 80, IC_PADL = 40, IC_PADR = 12, IC_PADB = 20, IC_PADT = 8;
+  const ic_inW = IC_W - IC_PADL - IC_PADR, ic_inH = IC_H - IC_PADB - IC_PADT;
   const ic_prices = invoiceChartData ? invoiceChartData.map(i => i.pricePerGallon) : [];
   const ic_minP = ic_prices.length ? Math.floor((Math.min(...ic_prices) - 0.1) * 10) / 10 : 0;
   const ic_maxP = ic_prices.length ? Math.ceil((Math.max(...ic_prices) + 0.1) * 10) / 10 : 5;
@@ -258,11 +252,6 @@ export default function Dashboard() {
   const listedPath = weekTrend.length > 1 ? weekTrend.map((w, i) => `${i === 0 ? 'M' : 'L'} ${mt_X(i)} ${mt_Y(w.listedMargin)}`).join(' ') : '';
   const effectivePath = weekTrend.length > 1 ? weekTrend.map((w, i) => `${i === 0 ? 'M' : 'L'} ${mt_X(i)} ${mt_Y(w.effectiveMargin)}`).join(' ') : '';
   const mt_yTicks = [mt_min, Math.round((mt_min + mt_max) / 2), mt_max];
-
-  const RING_SIZE = 110, STROKE = 9;
-  const R = (RING_SIZE - STROKE) / 2, CIRCUMFERENCE = 2 * Math.PI * R;
-  const ringProgress = inventoryPct ? (inventoryPct / 100) * CIRCUMFERENCE : 0;
-  const ringColor = inventoryPct ? inventoryPct < 25 ? '#ef4444' : inventoryPct < 50 ? '#f59e0b' : '#22c55e' : '#1f2937';
 
   const barColor = effectiveMargin === null ? '#1f2937' : Math.abs(marginDeviation) < 2 ? '#22c55e' : Math.abs(marginDeviation) < 5 ? '#f59e0b' : '#ef4444';
 
@@ -294,8 +283,10 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Row 1: COGS | Gross Profit | Suggested Price */}
         <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
 
+          {/* COGS card */}
           <div style={cardStyle}>
             {mostRecentInvoice ? (
               <>
@@ -323,7 +314,7 @@ export default function Dashboard() {
                 {invoiceChartData && (
                   <div style={{ marginTop: '0.6rem' }}>
                     <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: '0 0 0.2rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>COGS Trend · Last 3 Months</p>
-                    <svg width="100%" viewBox={`0 0 ${IC_W} ${IC_H + 10}`} style={{ overflow: 'visible' }}>
+                    <svg width="100%" viewBox={`0 0 ${IC_W} ${IC_H + 10}`} style={{ overflow: 'hidden', display: 'block' }}>
                       <defs>
                         <linearGradient id="invoiceGrad" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.15" />
@@ -332,7 +323,7 @@ export default function Dashboard() {
                       </defs>
                       {ic_yTicks.map((tick, i) => (
                         <g key={i}>
-                          <line x1={IC_PADL} y1={ic_Y(tick)} x2={IC_W} y2={ic_Y(tick)} stroke="#1a2030" strokeWidth="1" strokeDasharray="3,3" />
+                          <line x1={IC_PADL} y1={ic_Y(tick)} x2={IC_W - IC_PADR} y2={ic_Y(tick)} stroke="#1a2030" strokeWidth="1" strokeDasharray="3,3" />
                           <text x={IC_PADL - 4} y={ic_Y(tick) + 3} textAnchor="end" fontSize="8" fill="#374151">${tick.toFixed(2)}</text>
                         </g>
                       ))}
@@ -342,8 +333,10 @@ export default function Dashboard() {
                         <circle key={i} cx={ic_X(new Date(inv.date).getTime())} cy={ic_Y(inv.pricePerGallon)} r="2.5" fill="#fbbf24" />
                       ))}
                       {invoiceChartData.map((inv, i) => {
-                        if (i === 0 || i === invoiceChartData.length - 1) {
-                          return <text key={i} x={ic_X(new Date(inv.date).getTime())} y={IC_H + 4} textAnchor="middle" fontSize="7.5" fill="#374151">{inv.date.slice(5)}</text>;
+                        const mid = Math.floor(invoiceChartData.length / 2);
+                        if (i === 0 || i === invoiceChartData.length - 1 || i === mid) {
+                          const anchor = i === 0 ? 'start' : i === invoiceChartData.length - 1 ? 'end' : 'middle';
+                          return <text key={i} x={ic_X(new Date(inv.date).getTime())} y={IC_H + 4} textAnchor={anchor} fontSize="7.5" fill="#6b7280">{inv.date.slice(5)}</text>;
                         }
                         return null;
                       })}
@@ -367,11 +360,61 @@ export default function Dashboard() {
             )}
           </div>
 
+          {/* Gross Profit card */}
           <div style={cardStyle}>
-            <p style={labelStyle}>Suggested Price</p>
-            <p style={sublabelStyle}>Maintains {targetMargin}% margin</p>
-            {suggestedPrice ? <p style={{ fontSize: '2rem', fontWeight: 700, color: '#60a5fa', letterSpacing: '-0.04em', margin: '0.4rem 0 0' }}>${suggestedPrice}<span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 400 }}>/gal</span></p> : <p style={{ color: '#374151', fontSize: '1.5rem' }}>—</p>}
-            <div style={{ marginTop: '0.6rem', borderTop: '1px solid #1a2030', paddingTop: '0.5rem' }}>
+            <p style={labelStyle}>Gross Profit · 7 Days</p>
+            <p style={sublabelStyle}>Revenue − fuel cost (COGS basis)</p>
+            {grossProfit7d !== null ? (
+              <>
+                <p style={{ fontSize: '2rem', fontWeight: 700, color: '#22c55e', letterSpacing: '-0.04em', margin: '0.3rem 0 0.1rem' }}>
+                  ${grossProfit7d.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </p>
+                {gpWowChange !== null && (
+                  <p style={{ fontSize: '0.7rem', fontWeight: 600, color: gpWowChange >= 0 ? '#22c55e' : '#ef4444', margin: 0 }}>
+                    {gpWowChange >= 0 ? '▲' : '▼'} {Math.abs(gpWowChange).toFixed(1)}% <span style={{ color: '#4b5563', fontWeight: 400 }}>vs. prior 7d</span>
+                  </p>
+                )}
+                <div style={{ marginTop: '0.6rem', borderTop: '1px solid #1a2030', paddingTop: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.4rem' }}>
+                  <div>
+                    <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Revenue 7d</p>
+                    <p style={{ fontSize: '0.85rem', color: '#34d399', margin: '0.15rem 0 0', fontWeight: 700 }}>${gp7dRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Gallons 7d</p>
+                    <p style={{ fontSize: '0.85rem', color: '#60a5fa', margin: '0.15rem 0 0', fontWeight: 700 }}>{gp7dGallons.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Fuel Cost 7d</p>
+                    <p style={{ fontSize: '0.85rem', color: '#fbbf24', margin: '0.15rem 0 0', fontWeight: 700 }}>${gp7dCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase' }}>GP / Gallon</p>
+                    <p style={{ fontSize: '0.85rem', color: '#22c55e', margin: '0.15rem 0 0', fontWeight: 700 }}>${gp7dGallons ? (grossProfit7d / gp7dGallons).toFixed(3) : '0.000'}</p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ padding: '2rem 0', textAlign: 'center' }}>
+                <p style={{ fontSize: '1.4rem', color: '#374151', margin: 0, fontWeight: 600 }}>—</p>
+                <p style={{ fontSize: '0.65rem', color: '#6b7280', margin: '0.5rem 0 0' }}>{effectiveCOGS === null ? 'Log an invoice to compute GP' : 'No transactions in last 7 days'}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Suggested Price card — FOCAL */}
+          <div style={{ ...cardStyle, border: '1.5px solid #2c5282', background: 'rgba(37, 99, 235, 0.06)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <p style={{ ...labelStyle, color: '#60a5fa' }}>Suggested Price</p>
+              <span style={{ fontSize: '0.5rem', color: '#bfdbfe', background: '#1e3a5f', border: '1px solid #2c5282', borderRadius: '4px', padding: '1px 6px', fontWeight: 700, letterSpacing: '0.08em' }}>SET THIS</span>
+            </div>
+            <p style={sublabelStyle}>What to charge for {targetMargin}% margin</p>
+            {suggestedPrice ? <p style={{ fontSize: '2.4rem', fontWeight: 800, color: '#60a5fa', letterSpacing: '-0.04em', margin: '0.3rem 0 0' }}>${suggestedPrice}<span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: 400 }}>/gal</span></p> : <p style={{ color: '#374151', fontSize: '1.5rem', margin: '0.3rem 0 0' }}>—</p>}
+            {listedPrice !== null && suggestedPrice && (
+              <p style={{ fontSize: '0.65rem', color: listedPrice >= parseFloat(suggestedPrice) ? '#22c55e' : '#f59e0b', margin: '0.25rem 0 0', fontWeight: 500 }}>
+                Currently charging ${listedPrice.toFixed(2)} · {listedPrice >= parseFloat(suggestedPrice) ? 'at or above target' : `$${(parseFloat(suggestedPrice) - listedPrice).toFixed(2)} below`}
+              </p>
+            )}
+            <div style={{ marginTop: '0.6rem', borderTop: '1px solid #1e3a5f', paddingTop: '0.5rem' }}>
               <p style={{ fontSize: '0.6rem', color: '#4b5563', margin: '0 0 0.2rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Target Margin (%)</p>
               <input
                 type="number" step="1" min="1" max="99"
@@ -382,46 +425,13 @@ export default function Dashboard() {
                   saveTargetMargin(v);
                 }}
                 onWheel={(e) => e.target.blur()}
-                style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }}
+                style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1e3a5f', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }}
               />
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <p style={{ ...labelStyle, marginBottom: '0.5rem' }}>Fuel Inventory</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: RING_SIZE, height: RING_SIZE }}>
-                <svg width={RING_SIZE} height={RING_SIZE} style={{ transform: 'rotate(-90deg)' }}>
-                  <circle cx={RING_SIZE / 2} cy={RING_SIZE / 2} r={R} fill="none" stroke="#0f1923" strokeWidth={STROKE} />
-                  <circle cx={RING_SIZE / 2} cy={RING_SIZE / 2} r={R} fill="none" stroke={ringColor} strokeWidth={STROKE} strokeDasharray={`${ringProgress} ${CIRCUMFERENCE}`} strokeLinecap="round" style={{ transition: 'stroke-dasharray 0.8s cubic-bezier(0.4,0,0.2,1)' }} />
-                </svg>
-                <div style={{ position: 'absolute', textAlign: 'center' }}>
-                  {inventoryPct !== null ? (
-                    <>
-                      <p style={{ fontSize: '1.1rem', fontWeight: 700, color: ringColor, margin: 0, letterSpacing: '-0.03em' }}>{inventoryPct.toFixed(0)}%</p>
-                      <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0 }}>capacity</p>
-                    </>
-                  ) : <p style={{ fontSize: '0.55rem', color: '#374151', margin: 0 }}>Enter<br />values</p>}
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', flex: 1 }}>
-                <div>
-                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: '0 0 0.15rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Current</p>
-                  <input type="number" placeholder="0" value={inventory} 
-                    onChange={(e) => setInventory(e.target.value)}
-                    onBlur={(e) => saveInventory(e.target.value)}
-                    onWheel={(e) => e.target.blur()} 
-                    style={{ width: '100%', background: '#060809', color: '#f9fafb', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: '0 0 0.15rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Max Capacity</p>
-                  <input type="number" placeholder="0" value={capacity || ''} readOnly style={{ width: '100%', background: '#0a0c10', color: '#6b7280', border: '1px solid #1a2030', borderRadius: '0.4rem', padding: '0.3rem 0.55rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }} />
-                </div>
-              </div>
             </div>
           </div>
         </div>
 
+        {/* Row 2: Listed | Effective | Margin Bullet */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
           <div style={cardStyle}>
             <p style={labelStyle}>Listed Price Charged</p>
@@ -498,6 +508,7 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Row 3: Margin Trend | Weekly Volume | Transactions */}
         <div style={{ display: 'grid', gridTemplateColumns: weekTrend.length > 0 ? '1.3fr 1.3fr 1fr' : '1fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
           {weekTrend.length > 0 && (
             <div style={cardStyle}>
@@ -508,7 +519,7 @@ export default function Dashboard() {
                   <span style={{ color: '#34d399', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><span style={{ width: 8, height: 2, background: '#34d399', display: 'inline-block' }}></span> Effective</span>
                 </div>
               </div>
-              <svg width="100%" viewBox={`0 0 ${MT_W} ${MT_H + 10}`} style={{ overflow: 'visible' }}>
+              <svg width="100%" viewBox={`0 0 ${MT_W} ${MT_H + 10}`} style={{ overflow: 'hidden', display: 'block' }}>
                 <defs>
                   <linearGradient id="effectiveGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#34d399" stopOpacity="0.1" />
@@ -568,7 +579,7 @@ export default function Dashboard() {
                     <p style={{ fontSize: '0.55rem', color: '#374151', margin: 0 }}>WoW</p>
                   </div>
                 </div>
-                <svg width="100%" viewBox={`0 0 ${VT_W} ${VT_H + 10}`} style={{ overflow: 'visible' }}>
+                <svg width="100%" viewBox={`0 0 ${VT_W} ${VT_H + 10}`} style={{ overflow: 'hidden', display: 'block' }}>
                   {[0, vt_max / 2, vt_max].map((tick, i) => (
                     <g key={i}>
                       <line x1={VT_PADL} y1={vt_Y(tick)} x2={VT_W} y2={vt_Y(tick)} stroke="#1a2030" strokeWidth="1" strokeDasharray="3,3" />
@@ -616,11 +627,11 @@ export default function Dashboard() {
                   <p style={{ fontSize: '0.55rem', color: '#374151', margin: 0 }}>on discounted</p>
                 </div>
                 <div>
-                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Listed Price</p>
+                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Listed Avg</p>
                   <p style={{ fontSize: '1.1rem', fontWeight: 700, color: '#60a5fa', margin: '0.1rem 0 0' }}>${listedAvg?.toFixed(3)}</p>
                 </div>
                 <div>
-                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Effective Price</p>
+                  <p style={{ fontSize: '0.55rem', color: '#4b5563', margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Effective Avg</p>
                   <p style={{ fontSize: '1.1rem', fontWeight: 700, color: '#34d399', margin: '0.1rem 0 0' }}>${effectiveAvg?.toFixed(3)}</p>
                 </div>
               </div>
