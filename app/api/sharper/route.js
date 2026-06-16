@@ -40,7 +40,16 @@ export async function GET(request) {
     }
 
     const data = await res.json();
-    return Response.json({ transactions: data });
+    // Filter to the selected fuel's products. Gas-only marinas have an empty
+    // productMatch -> no filter, so they behave exactly as before.
+    const match = (marina.fuels[fuelKey].productMatch || []).map(s => s.toLowerCase());
+    const transactions = match.length
+      ? data.filter(r => {
+          const p = String(r.prod_name || '').toLowerCase();
+          return match.some(m => p.includes(m));
+        })
+      : data;
+    return Response.json({ transactions });
   } catch (err) {
     return Response.json({ error: 'Failed to fetch', detail: err.message }, { status: 500 });
   }

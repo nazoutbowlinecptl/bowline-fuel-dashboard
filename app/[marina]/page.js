@@ -11,6 +11,8 @@ export default function Dashboard() {
   const marinaConfig = slug ? getMarina(slug) : null;
   // DB key: registry dbName if set, else the slug (only Lake Oconee differs).
   const dbName = marinaConfig?.dbName || marinaConfig?.slug || slug;
+  // Fuels this marina sells, e.g. ['gas'] or ['gas','diesel'].
+  const availableFuels = marinaConfig ? Object.keys(marinaConfig.fuels) : [];
 
   const [marina, setMarina] = useState(null);
   const [targetMargin, setTargetMargin] = useState(30);
@@ -29,13 +31,20 @@ export default function Dashboard() {
   const [invTotalCost, setInvTotalCost] = useState('');
   const [saving, setSaving] = useState(false);
   const [manualPrice, setManualPrice] = useState('');
+  const [activeFuel, setActiveFuel] = useState(null);
 
   useEffect(() => {
     if (!marinaConfig) return;
     fetchMarina();
     fetchInvoices();
-    fetchSharperTransactions();
+    setActiveFuel(availableFuels[0] || null);
   }, [slug]);
+
+  // Refetch Sharper whenever the active fuel changes (fires once on load too).
+  useEffect(() => {
+    if (!marinaConfig || !activeFuel) return;
+    fetchSharperTransactions();
+  }, [activeFuel]);
 
   async function fetchMarina() {
     try {
@@ -67,7 +76,7 @@ export default function Dashboard() {
 
   async function fetchSharperTransactions() {
     try {
-      const res = await fetch(`/api/sharper?marina=${slug}`);
+      const res = await fetch(`/api/sharper?marina=${slug}&fuel=${activeFuel}`);
       const data = await res.json();
       if (!data.transactions) return;
       const parsed = data.transactions.map(r => {
@@ -168,7 +177,12 @@ export default function Dashboard() {
   const maxDate = allTxWithDate.length ? new Date(Math.max(...allTxWithDate.map(t => t.dateObj))) : null;
   const cutoff = maxDate ? new Date(maxDate.getTime() - 2 * 24 * 60 * 60 * 1000) : null;
   const recentTx = allTxWithDate.filter(t => t.dateObj > cutoff).sort((a, b) => new Date(b.time) - new Date(a.time));
-  const mostRecentInvoice = invoices.length > 0 ? invoices[0] : null;
+  // For dual-fuel marinas, scope invoices to the active fuel (gas vs diesel).
+  const invoiceFuelClass = (ft) => String(ft || '').toLowerCase().includes('diesel') ? 'diesel' : 'gas';
+  const fuelInvoices = availableFuels.length > 1
+    ? invoices.filter(inv => invoiceFuelClass(inv.fuelType) === activeFuel)
+    : invoices;
+  const mostRecentInvoice = fuelInvoices.length > 0 ? fuelInvoices[0] : null;
   const effectiveCOGS = mostRecentInvoice ? mostRecentInvoice.pricePerGallon : null;
 
   const sevenDayCutoff = maxDate ? new Date(maxDate.getTime() - 7 * 24 * 60 * 60 * 1000) : null;
@@ -184,10 +198,10 @@ export default function Dashboard() {
   const gpWowChange = (priorGrossProfit7d && priorGrossProfit7d !== 0) ? ((grossProfit7d - priorGrossProfit7d) / priorGrossProfit7d) * 100 : null;
 
   const invoiceChartData = (() => {
-    if (invoices.length < 2) return null;
+    if (fuelInvoices.length < 2) return null;
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const recent = invoices
+    const recent = fuelInvoices
       .filter(inv => new Date(inv.date) >= ninetyDaysAgo)
       .sort((a, b) => new Date(a.date) - new Date(b.date));
     if (recent.length < 2) return null;
@@ -294,6 +308,15 @@ export default function Dashboard() {
             <h1 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.03em', color: '#f9fafb', margin: 0 }}>{marina?.display_name || marinaConfig?.name || 'Loading...'}</h1>
             <p style={{ fontSize: '0.7rem', color: '#4b5563', marginTop: '0.1rem' }}>{marina?.address} · Region: {marina?.region} · Vendor: {marina?.vendor}</p>
             {sharperUpdated && <p style={{ fontSize: '0.6rem', color: '#374151', margin: '0.2rem 0 0' }}>Sharper synced: {sharperUpdated}</p>}
+            {availableFuels.length > 1 && (
+              <div style={{ display: 'inline-flex', gap: '2px', background: '#0d1117', border: '1px solid #1f2937', borderRadius: '0.5rem', padding: '2px', marginTop: '0.5rem' }}>
+                {availableFuels.map(f => (
+                  <button key={f} onClick={() => setActiveFuel(f)} style={{ textTransform: 'capitalize', padding: '0.3rem 1rem', borderRadius: '0.4rem', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', border: 'none', background: activeFuel === f ? '#1e3a5f' : 'transparent', color: activeFuel === f ? '#bfdbfe' : '#6b7280', transition: 'all 0.15s' }}>
+                    {f}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <button onClick={() => setShowInvoiceModal(true)} style={{ background: '#1e3a5f', border: '1px solid #2c5282', color: '#bfdbfe', padding: '0.35rem 0.7rem', borderRadius: '0.4rem', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 600 }}>
