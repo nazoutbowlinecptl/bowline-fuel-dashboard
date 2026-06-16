@@ -175,7 +175,7 @@ export default function Dashboard() {
   const parseDate = (d) => { if (!d) return null; const dt = new Date(d); return isNaN(dt) ? null : dt; };
   const allTxWithDate = transactions.map(t => ({ ...t, dateObj: parseDate(t.date) })).filter(t => t.dateObj);
   const maxDate = allTxWithDate.length ? new Date(Math.max(...allTxWithDate.map(t => t.dateObj))) : null;
-  const cutoff = maxDate ? new Date(maxDate.getTime() - 2 * 24 * 60 * 60 * 1000) : null;
+  const cutoff = maxDate ? new Date(maxDate.getTime() - 7 * 24 * 60 * 60 * 1000) : null;
   const recentTx = allTxWithDate.filter(t => t.dateObj > cutoff).sort((a, b) => new Date(b.time) - new Date(a.time));
   // For dual-fuel marinas, scope invoices to the active fuel (gas vs diesel).
   const invoiceFuelClass = (ft) => String(ft || '').toLowerCase().includes('diesel') ? 'diesel' : 'gas';
@@ -478,7 +478,7 @@ export default function Dashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr', gap: '0.85rem', marginBottom: '0.85rem' }}>
           <div style={cardStyle}>
             <p style={labelStyle}>Listed Price Charged</p>
-            <p style={sublabelStyle}>{hasTxData ? `Live from Sharper · ${recentTx.length} tx (2 days)` : 'Manual entry'}</p>
+            <p style={sublabelStyle}>{hasTxData ? `Live from Sharper · ${recentTx.length} tx (7 days)` : 'Manual entry'}</p>
             {listedPrice !== null ? (
               <p style={{ fontSize: '1.8rem', fontWeight: 700, color: '#60a5fa', letterSpacing: '-0.04em', margin: '0.35rem 0' }}>${listedPrice.toFixed(3)}<span style={{ fontSize: '0.75rem', color: '#4b5563', fontWeight: 400 }}>/gal</span></p>
             ) : (
@@ -648,7 +648,7 @@ export default function Dashboard() {
 
           <div style={cardStyle}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-              <div><p style={labelStyle}>Transactions (2 days)</p></div>
+              <div><p style={labelStyle}>Transactions (7 days)</p></div>
               {recentTx.length > 0 && (
                 <button onClick={() => setShowTxTable(!showTxTable)} style={{ background: '#111827', border: '1px solid #1f2937', color: '#9ca3af', padding: '0.25rem 0.6rem', borderRadius: '0.35rem', fontSize: '0.65rem', cursor: 'pointer' }}>
                   {showTxTable ? '− Hide' : '+ Show'} ({recentTx.length})
