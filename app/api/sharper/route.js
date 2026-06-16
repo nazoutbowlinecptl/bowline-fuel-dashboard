@@ -1,13 +1,35 @@
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+import { getMarina, marinaCreds, fuelTypes } from '@/lib/marinas';
+
+export async function GET(request) {
   try {
-    const url = 'https://lakeoconee-api.sharpermms.com/api/v1/web-data-source';
-    const res = await fetch(url, {
+    const { searchParams } = new URL(request.url);
+    const slug = searchParams.get('marina') || 'lakeoconee'; // default keeps the live dashboard working
+    const fuelParam = searchParams.get('fuel');               // optional: 'gas' or 'diesel'
+
+    const marina = getMarina(slug);
+    if (!marina) {
+      return Response.json({ error: `Unknown marina: ${slug}` }, { status: 404 });
+    }
+
+    // Pick the fuel's outlet — the requested fuel, or the marina's first fuel.
+    const fuelKey = fuelParam && marina.fuels[fuelParam] ? fuelParam : fuelTypes(marina)[0];
+    const outlet = marina.fuels[fuelKey]?.outlet;
+    const { reportKey, userKey } = marinaCreds(marina);
+
+    if (!outlet || !reportKey || !userKey) {
+      return Response.json(
+        { error: `Missing config/keys for ${slug}`, detail: { outlet: !!outlet, reportKey: !!reportKey, userKey: !!userKey } },
+        { status: 500 }
+      );
+    }
+
+    const res = await fetch(marina.apiUrl, {
       headers: {
-        'Outlet': '2',
-        'Report': process.env.SHARPER_REPORT_API,
-        'Authorization': process.env.SHARPER_USER_API,
+        'Outlet': String(outlet),
+        'Report': reportKey,
+        'Authorization': userKey,
       },
       cache: 'no-store',
     });
