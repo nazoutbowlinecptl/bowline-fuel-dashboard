@@ -36,14 +36,17 @@ export default function PortfolioPage() {
   // Group to marina level for the bottom panels.
   const byMarina = {};
   for (const r of live) {
-    if (!byMarina[r.slug]) byMarina[r.slug] = { name: r.marinaName, slug: r.slug, gallons: 0, lastInvoiceDate: null };
+    if (!byMarina[r.slug]) byMarina[r.slug] = { name: r.marinaName, slug: r.slug, gallons: 0, profit: null, lastInvoiceDate: null };
     byMarina[r.slug].gallons += r.gallons || 0;
+    if (r.profit != null) byMarina[r.slug].profit = (byMarina[r.slug].profit || 0) + r.profit;
     if (r.lastInvoiceDate && (!byMarina[r.slug].lastInvoiceDate || new Date(r.lastInvoiceDate) > new Date(byMarina[r.slug].lastInvoiceDate))) {
       byMarina[r.slug].lastInvoiceDate = r.lastInvoiceDate;
     }
   }
   const marinaList = Object.values(byMarina).sort((a, b) => a.name.localeCompare(b.name));
   const maxGallons = Math.max(1, ...marinaList.map((m) => m.gallons));
+  const profitMarinas = marinaList.filter((m) => m.profit != null);
+  const maxProfit = Math.max(1, ...profitMarinas.map((m) => Math.abs(m.profit)));
   const staleManagers = marinaList.filter((m) => {
     const d = daysSince(m.lastInvoiceDate);
     return d == null || d > 21;
@@ -109,8 +112,8 @@ export default function PortfolioPage() {
         </p>
       </div>
 
-      {/* Bottom row: volume by marina + manager activity */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: '0.6rem' }}>
+      {/* Bottom row: volume + profit + manager activity */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr', gap: '0.6rem' }}>
         <div style={card}>
           <p style={{ ...label, marginBottom: '0.6rem' }}>Volume by marina · 7d (gallons)</p>
           {marinaList.map((m) => (
@@ -124,6 +127,21 @@ export default function PortfolioPage() {
             </div>
           ))}
           {!marinaList.length && <p style={{ color: '#6b7280', fontSize: 11 }}>No live marinas yet.</p>}
+        </div>
+
+        <div style={card}>
+          <p style={{ ...label, marginBottom: '0.6rem' }}>Profit by marina · 7d</p>
+          {profitMarinas.length ? profitMarinas.map((m) => (
+            <div key={m.slug} style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 2 }}>
+                <span>{m.name}</span>
+                <span style={{ color: m.profit < 0 ? '#f87171' : '#9ca3af' }}>{fmtUSD(m.profit)}</span>
+              </div>
+              <div style={{ height: 4, background: '#1a2030', borderRadius: 2 }}>
+                <div style={{ width: `${(Math.abs(m.profit) / maxProfit) * 100}%`, height: '100%', background: m.profit < 0 ? '#f87171' : '#34d399', borderRadius: 2 }} />
+              </div>
+            </div>
+          )) : <p style={{ color: '#6b7280', fontSize: 11 }}>Populates as invoices are logged.</p>}
         </div>
 
         <div style={card}>
